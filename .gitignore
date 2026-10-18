@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Environment
+.env
+.mcp-token.json
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Table state mirrored to disk (MESA_PERSIST)
+sessions.json
+
+# Editors
+.idea/
+.vscode/
+.DS_Store
+
+# Local runtime logs
+*.log
+logs/

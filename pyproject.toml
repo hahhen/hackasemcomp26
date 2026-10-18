@@ -1,0 +1,37 @@
+[project]
+name = "hackasemcomp26-agent"
+version = "0.1.0"
+description = "LangChain + LangGraph tool-calling agent with iFood MCP tools"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain[mcp]>=1.4.0",
+    "langchain-core>=0.3.0",
+    "langgraph>=0.2.60",
+    "langchain-openai>=0.2.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pydantic>=2.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.8.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
