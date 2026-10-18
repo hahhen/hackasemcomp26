@@ -59,7 +59,7 @@ export function Header({ health, offline, room, view, onView, member, notify, se
         <div className="sidebar-code"><span>Código do convite</span><strong>{room}</strong></div>
         <button className="primary" onClick={copyLink}>Copiar convite 🔗</button>
         <a className="sidebar-link" href={window.location.pathname}>Criar ou entrar em outra mesa →</a>
-        <div className="sidebar-status">{offline ? "Sem conexão" : health?.mode === "live" ? "Conectado ao iFood" : "MCP simulado"}</div>
+        <div className="sidebar-status">{offline ? "Sem conexão com o servidor" : health?.mode === "live" ? "iFood em modo real · disponibilidade depende das consultas" : "MCP simulado"}</div>
       </aside>
     </div>}
   </>;

@@ -89,6 +89,7 @@ class Candidate:
 
     merchant: MerchantInfo
     options: dict[str, list[Hit]]
+    search_incomplete: bool = False
 
 
 # --- parsing ----------------------------------------------------------------
@@ -153,8 +154,24 @@ def matches_wish(hit: Hit, intent: Intent) -> bool:
 
 def food_words(text: str) -> set[str]:
     text = _plain(text)
+    text = re.sub(r"\bx[\s-]*(?=salada\b|bacon\b|tudo\b|egg\b|frango\b|burguer\b|burger\b|calabresa\b)", "hamburguer ", text)
     text = re.sub(r"\b(?:hamburger|hamburguer|burger|burguer|burgers)\b", "hamburguer", text)
-    return set(re.findall(r"[a-z]+", text)) - {"com", "de", "do", "da", "e", "um", "uma"}
+    words = set(re.findall(r"[a-z]+", text)) - {"com", "de", "do", "da", "e", "um", "uma", "comida"}
+    for category, related in FOOD_FAMILIES.items():
+        if words & related:
+            words.add(category)
+    return words
+
+
+FOOD_FAMILIES = {
+    "hamburguer": {"hamburguer", "smash"},
+    "pizza": {"pizza", "pizzas"},
+    "japonesa": {"sushi", "sashimi", "temaki", "uramaki", "hossomaki", "niguiri", "nigiri"},
+    "massa": {"massa", "macarrao", "lasanha", "nhoque", "ravioli", "espaguete"},
+    "esfiha": {"esfiha", "esfirra"},
+    "salgado": {"salgado", "salgados", "coxinha", "pastel", "empada", "risole", "kibe", "quibe"},
+    "acai": {"acai"},
+}
 
 
 def matches_exact(hit: Hit, intent: Intent) -> bool:
@@ -167,15 +184,8 @@ def matches_exact(hit: Hit, intent: Intent) -> bool:
 def similar_query(intent: Intent) -> str | None:
     """Conservative food families; never turn sushi into an arbitrary sandwich."""
     words = food_words(" ".join(intent.queries))
-    for family, related in {
-        "hamburguer": {"hamburguer", "smash"},
-        "pizza": {"pizza", "pizzas"},
-        "sushi": {"sushi", "sashimi", "temaki", "uramaki", "hossomaki", "niguiri", "nigiri"},
-        "massa": {"massa", "macarrao", "lasanha", "nhoque", "ravioli", "espaguete"},
-        "esfiha": {"esfiha", "esfirra"},
-        "acai": {"acai"},
-    }.items():
-        if words & related:
+    for family in FOOD_FAMILIES:
+        if family in words:
             return family
     return None
 
@@ -456,6 +466,8 @@ async def find_merchant(
         extra = {}
         for member, hits in zip(thin, scoped):
             if isinstance(hits, Exception):
+                if not recoverable_search_error(hits):
+                    raise hits
                 incomplete.append(hits)
                 log(f"{info[mid].name}: nao consegui ampliar o cardapio; usando os pratos ja encontrados.", "warn")
             else:
@@ -481,8 +493,11 @@ async def find_merchant(
     # Only propose substitutions after an exact shared restaurant was not found.
     # Infrastructure errors must not be described as a lack of food options.
     if not any(all(options.get(m.id) for m in members) for options in completed):
+        for error in incomplete:
+            if not recoverable_search_error(error):
+                raise error
         if incomplete or first_errors:
-            raise (incomplete or first_errors)[0]
+            log("Parte das consultas falhou; vou aproveitar resultados confirmados e tentar similares sem afirmar ausencia de pratos.", "warn")
         log("Nenhuma das lojas consultadas atende todos os desejos exatos; buscando alternativas similares.", "info")
 
         async def alternatives(mid, options):
@@ -498,6 +513,8 @@ async def find_merchant(
                 try:
                     hits = await searcher.hits(alternative_member, alternative_intent, merchant_id=mid, max_pages=1)
                 except MCPError as exc:
+                    if not recoverable_search_error(exc):
+                        raise
                     incomplete.append(exc)
                     return
                 safe = [replace(h, alternative_query=query) for h in hits if matches_exact(h, alternative_intent)
@@ -510,24 +527,24 @@ async def find_merchant(
     n = len(members)
     for mid, options in zip(ranked, completed):
         merchant = info[mid]
-        if not all(options.get(m.id) for m in members):
-            log(f"{merchant.name}: nao cobre todos da mesa", "info")
+        covered = [m for m in members if options.get(m.id)]
+        if not covered:
             continue
-        picks = {m.id: options[m.id][0] for m in members}
+        picks = {m.id: options[m.id][0] for m in covered}
         subtotal = sum(p.price for p in picks.values())
         over = sum(
             1
-            for m in members
+            for m in covered
             if m.max_budget is not None and picks[m.id].price > m.max_budget
         )
         shortfall = max(0.0, merchant.minimum - subtotal)
         total = subtotal + merchant.fee
         log(
-            f"{merchant.name}: cobre {n}/{n} · itens R$ {subtotal:.2f} + entrega R$ {merchant.fee:.2f}",
+            f"{merchant.name}: cobre {len(covered)}/{n} · itens R$ {subtotal:.2f} + entrega R$ {merchant.fee:.2f}",
             "ok",
         )
-        substitutions = sum(bool(options[m.id][0].alternative_query) for m in members)
-        scored.append(((substitutions, over, shortfall > 0, round(total, 2)), merchant, options))
+        substitutions = sum(bool(options[m.id][0].alternative_query) for m in covered)
+        scored.append(((-len(covered), substitutions, over, shortfall > 0, round(total, 2)), merchant, options))
 
     if not scored:
         if incomplete:
@@ -537,7 +554,10 @@ async def find_merchant(
             "Tentem mudar algum pedido ou buscar novamente."
         )
     scored.sort(key=lambda s: s[0])
-    return [Candidate(merchant, options) for _, merchant, options in scored]
+    complete_scores = [entry for entry in scored if -entry[0][0] == len(members)]
+    if complete_scores:
+        scored = complete_scores
+    return [Candidate(merchant, options, bool(incomplete or first_errors)) for _, merchant, options in scored]
 
 
 # --- validation: getMerchant + getItem + required options -----------------------

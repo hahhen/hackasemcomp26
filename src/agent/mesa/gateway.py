@@ -13,8 +13,10 @@ Two implementations share one interface:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
+import time
 from typing import Any, Protocol
 
 from dotenv import load_dotenv
@@ -28,10 +30,11 @@ load_dotenv()
 class MCPError(RuntimeError):
     """A tool answered with an error payload (or could not be reached)."""
 
-    def __init__(self, tool: str, message: str) -> None:
+    def __init__(self, tool: str, message: str, *, code: str | None = None) -> None:
         super().__init__(f"{tool}: {message}")
         self.tool = tool
         self.message = message
+        self.code = code
 
 
 class Gateway(Protocol):
@@ -56,7 +59,7 @@ def raise_if_error(tool: str, payload: Any) -> Any:
         "INTERNAL", "INVALID_ARGUMENT", "UNAUTHENTICATED", "PERMISSION_DENIED", "NOT_FOUND",
         "FAILED_PRECONDITION", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED",
     }:
-        raise MCPError(tool, str(payload.get("message") or payload["code"]))
+        raise MCPError(tool, str(payload.get("message") or payload["code"]), code=str(payload["code"]).upper())
     if isinstance(payload, dict) and (payload.get("success") is False
             or str(payload.get("status", "")).upper() in {"ERROR", "FAILED", "FAILURE"}):
         raise MCPError(tool, str(payload.get("userFriendlyMessage") or payload.get("message")
@@ -77,14 +80,27 @@ class LiveGateway:
     def __init__(self) -> None:
         self._tools: dict[str, Any] | None = None
         self._lock = asyncio.Lock()
+        self._token_fingerprint: str | None = None
+        self._auth_recovery_lock = asyncio.Lock()
+        self._last_auth_recovery = float("-inf")
+        self._calls = asyncio.Semaphore(max(1, int(os.getenv("MCP_MAX_CONCURRENT_CALLS", "4"))))
 
     async def _load(self, force: bool = False) -> dict[str, Any]:
         async with self._lock:
-            if self._tools is None or force:
+            from agent.oauth import get_access_token
+            try:
+                token = await get_access_token(refresh=force, interactive=False)
+            except RuntimeError as exc:
+                raise MCPError("oauth", "Nao consegui autenticar ou renovar a sessao do iFood. "
+                               "Execute python -m agent.oauth no terminal.", code="UNAUTHENTICATED") from exc
+            fingerprint = hashlib.sha256(token.encode()).hexdigest()
+            if self._tools is None or force or fingerprint != self._token_fingerprint:
                 from agent.mcp import load_mcp_tools
 
-                loaded = await load_mcp_tools()
+                loaded = await load_mcp_tools(access_token=token)
                 self._tools = {t.name: t for t in loaded}
+                self._token_fingerprint = fingerprint
+                logging.getLogger(__name__).info("MCP tool client loaded with current credentials")
             return self._tools
 
     @node("gateway", tool_event="tool.call")
@@ -92,11 +108,16 @@ class LiveGateway:
         # Search pagination already owns its retries. Never retry mutations:
         # an upstream failure may occur after a cart/order was created.
         attempts = 3 if tool in {"listAddresses", "getMerchant", "getItem"} else 1
+        failed_token: str | None = None
+        first_internal = False
         for attempt in range(attempts):
             try:
                 return await self._call_once(tool, **args)
             except MCPError as exc:
-                transient = any(marker in exc.message.lower() for marker in (
+                if attempt == 0:
+                    failed_token = self._token_fingerprint
+                    first_internal = exc.code == "INTERNAL"
+                transient = exc.code in {"INTERNAL", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED"} or any(marker in exc.message.lower() for marker in (
                     "upstream", "internal", "unavailable", "server returned an error response",
                     "timeout", "timed out", "429", "502", "503", "504",
                 ))
@@ -104,29 +125,54 @@ class LiveGateway:
                     raise
                 if attempt == attempts - 1:
                     raise MCPError(tool, "O iFood esta temporariamente indisponivel "
-                                   f"na consulta {tool} apos {attempts} tentativas. Tente novamente.") from exc
+                                   f"na consulta {tool} apos {attempts} tentativas. Tente novamente.", code=exc.code) from exc
+                # Some address failures return INTERNAL even while a locally
+                # unexpired token is unusable. A controlled refresh restored
+                # reads in the isolated HTTP diagnostic. Recover only after
+                # two failed reads, within the existing three-attempt budget.
+                if tool == "listAddresses" and attempt == 1 and first_internal and exc.code == "INTERNAL":
+                    await self._recover_address_auth(failed_token)
                 logging.getLogger(__name__).warning("%s transient failure (attempt %s/%s)",
                                                     tool, attempt + 1, attempts)
                 await asyncio.sleep(0.5 * (2 ** attempt))
 
+    async def _recover_address_auth(self, failed_token: str | None) -> None:
+        if not failed_token or os.getenv("MCP_BEARER_TOKEN"):
+            return
+        async with self._auth_recovery_lock:
+            # Other rooms share this gateway. Do not rotate the token again
+            # when another request has recovered it, or on persistent outages.
+            if failed_token != self._token_fingerprint:
+                return
+            now = time.monotonic()
+            if now - self._last_auth_recovery < 300:
+                return
+            self._last_auth_recovery = now
+            logging.getLogger(__name__).warning("Repeated listAddresses INTERNAL; trying one OAuth refresh")
+            await self._load(force=True)
+
     async def _call_once(self, tool: str, **args: Any) -> Any:
         tools = await self._load()
         if tool not in tools:
-            raise MCPError(tool, "tool not exposed by the MCP server (check MCP_TOOLS)")
+            raise MCPError(tool, "tool not exposed by the MCP server")
         payload = _clean(args)
         try:
             return await self._invoke(tool, tools[tool], payload)
         except Exception as exc:
             text = str(exc).lower()
-            if "401" in text or "unauthor" in text or "expired" in text:
+            auth_failure = getattr(exc, "code", None) == "UNAUTHENTICATED" or "401" in text or "unauthor" in text or "expired" in text
+            if auth_failure:
                 tools = await self._load(force=True)
                 return await self._invoke(tool, tools[tool], payload)
             else:
+                if isinstance(exc, MCPError):
+                    raise
                 raise MCPError(tool, str(exc)[:300]) from exc
 
     @node("gateway", tool_event="tool.attempt")
     async def _invoke(self, tool: str, adapter: Any, payload: dict) -> Any:
-        return raise_if_error(tool, decode(await adapter.ainvoke(payload)))
+        async with self._calls:
+            return raise_if_error(tool, decode(await adapter.ainvoke(payload)))
 
 
 _gateway: Gateway | None = None

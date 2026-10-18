@@ -80,6 +80,7 @@ def wants_cheap(member: Member) -> bool:
 def heuristic_intent(member: Member) -> Intent:
     """Keyword extraction: drop filler words and anything after a negation."""
     text = _plain(member.desire)
+    text = re.sub(r"\bx[\s-]*(?=salada\b|bacon\b|tudo\b|egg\b|frango\b|burguer\b|burger\b|calabresa\b)", "hamburguer ", text)
     price_pattern = r"\b(?:ate|no maximo|teto(?: de)?|limite(?: de)?)\s*(?:r\$\s*)?(\d+(?:[.,]\d+)?)\s*(?:reais)?"
     ceiling = re.search(price_pattern, text)
     text = re.sub(price_pattern, "", text)

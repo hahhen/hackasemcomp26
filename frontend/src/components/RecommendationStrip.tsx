@@ -70,7 +70,10 @@ export function RecommendationStrip({ session, meId, run }: Props) {
 
   const member = session.members.find((m) => !m.removed && m.id === meId);
   const suggestions = session.recommendations.filter((r) => r.memberId === meId);
-  if (!member || !suggestions.length) return null;
+  if (!member) return null;
+  if (!suggestions.length) return <section className="suggestions warning" role="status">
+    {member.desire || member.restrictions.length ? <>Ainda não encontrei um prato ou similar para seu pedido neste restaurante, respeitando seus limites. O host pode trocar a loja, ou você pode ajustar seu desejo no chat.</> : <>Conte no chat o que você quer comer para receber sugestões.</>}
+  </section>;
 
   return (
     <section className="suggestions" aria-label={`Sugestões para ${member.name}`}>

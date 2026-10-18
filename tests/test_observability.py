@@ -27,7 +27,10 @@ async def test_concurrent_rooms_keep_correlation_and_count_retries(monkeypatch):
     @obs.operation("recommend")
     async def run(room):
         gateway = LiveGateway()
-        gateway._tools = {"listAddresses": Tool()}
+        async def loaded(force=False):
+            return tools
+        tools = {"listAddresses": Tool()}
+        gateway._load = loaded
 
         @obs.node("load_context")
         async def load():

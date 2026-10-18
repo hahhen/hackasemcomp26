@@ -46,7 +46,7 @@ export function RestaurantBar({ session, meId, run }: Props) {
         </div>)}
         <small>Confirme que é o local de entrega e a conta iFood corretos. O endereço será validado pelo iFood ao criar o carrinho.</small>
       </>}
-      {addressFailed && <button className="link" disabled={loadingAddress} onClick={() => run(() => api.retrySearch())}>Tentar consultar o iFood novamente</button>}
+      <button className="link" disabled={loadingAddress || session.busy || session.chatBusy || !open} onClick={() => run(() => api.retrySearch())}>Buscar novamente</button>
       {addressError && <small>{addressError}</small>}
     </div>;
     return null;
@@ -58,7 +58,7 @@ export function RestaurantBar({ session, meId, run }: Props) {
       {selected?.logoUrl && <img className="restaurant-logo" src={selected.logoUrl} alt="" />}
       <div className="restaurant-text">
         <span className="dock-label">
-          {options.length > 1 ? `${options.length} restaurantes atendem a mesa` : "Restaurante da mesa"}
+          {options.length > 1 ? `${options.length} restaurantes com opções` : "Restaurante da mesa"}
         </span>
         {open && isHost ? (
           <select
@@ -71,6 +71,7 @@ export function RestaurantBar({ session, meId, run }: Props) {
               <option key={o.merchantId} value={o.merchantId}>
                 {o.name} — frete {money(o.fee)} · mín {money(o.minimumOrderAmount)}
                 {o.alternativeMembers?.length ? " · com sugestões similares" : ""}
+                {o.requestedCount ? ` · atende ${o.covers}/${o.requestedCount}` : ""}
                 {o.rating ? ` · ${o.rating}★` : ""}
                 {o.distanceKm ? ` · ${o.distanceKm} km` : ""}
               </option>
@@ -90,6 +91,9 @@ export function RestaurantBar({ session, meId, run }: Props) {
         </span>
       )}
       {selected?.alternativeMembers?.length ? <span className="restaurant-meta muted small">Sugestões similares para {selected.alternativeMembers.join(", ")}; confira os cartões antes de adicionar.</span> : null}
+      {selected?.missingMembers?.length ? <span className="restaurant-meta warning">Ainda sem opção para {selected.missingMembers.join(", ")}. Confira outro restaurante ou ajuste os desejos.</span> : null}
+      {selected?.searchIncomplete && <span className="restaurant-meta muted small">Busca parcial: algumas consultas ao iFood falharam.</span>}
+      {isHost && (selected?.missingMembers?.length || selected?.searchIncomplete) ? <button className="link" disabled={session.busy || session.searchingRecommendations || session.chatBusy || !open} onClick={() => run(() => api.retrySearch())}>Buscar novamente</button> : null}
       {session.searchingRecommendations && (
         <span className="restaurant-meta muted small" role="status">
           🔎 {session.recommendPhase || "procurando de novo…"}

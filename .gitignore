@@ -34,3 +34,6 @@ sessions.json
 # Local runtime logs
 *.log
 logs/
+
+artifacts/
+tmp/

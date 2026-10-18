@@ -25,6 +25,9 @@ export interface Recommendation {
 }
 
 export interface MerchantOption {
+  missingMembers: string[];
+  requestedCount: number;
+  searchIncomplete: boolean;
   alternativeMembers: string[];
   merchantId: string;
   name: string;

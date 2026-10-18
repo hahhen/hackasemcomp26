@@ -161,9 +161,12 @@ async def find(state: RecommendState) -> dict[str, Any]:
                     update={"required_terms": [], "queries": [hit.alternative_query]} if hit.alternative_query else {}))
                 and (not hit.alternative_query or not solver.risk_warnings(hit.description, member))
             ]
-    candidates = [c for c in candidates if all(c.options.get(mid) for mid in members)]
+    candidates = [c for c in candidates if any(c.options.get(mid) for mid in members)]
     if not candidates:
-        raise solver.NoMatch("Nao encontrei um restaurante com pratos que respeitem os desejos e tetos de todos.")
+        raise solver.NoMatch("Nenhum dos pratos encontrados passou pela conferencia dos desejos, precos e restricoes. "
+                             "Nao tenho uma sugestao segura para mostrar com esses limites.")
+    candidates.sort(key=lambda c: (-sum(bool(c.options.get(mid)) for mid in members),
+                                   sum(bool(hits and hits[0].alternative_query) for hits in c.options.values())))
     return {"candidates": candidates}
 
 
@@ -180,6 +183,9 @@ def merchant_option(candidate: solver.Candidate, members: list) -> MerchantOptio
         eta=merchant.eta,
         covers=sum(1 for m in members if candidate.options.get(m.id)),
         alternative_members=[m.name for m in members if any(h.alternative_query for h in candidate.options.get(m.id, []))],
+        missing_members=[m.name for m in members if not candidate.options.get(m.id)],
+        requested_count=len(members),
+        search_incomplete=candidate.search_incomplete,
     )
 
 
@@ -226,22 +232,32 @@ def publish_recommendations(session: Session, merchant_id: str) -> bool:
     ]
     alternatives = [(member, candidate.options.get(member.id, [])) for member in session.active_members
                     if any(h.alternative_query for h in candidate.options.get(member.id, []))]
+    missing = [member for member in _participants(session) if not candidate.options.get(member.id)]
     signature = repr((merchant_id, [(member.id, member.desire, [h.item_id for h in hits])
-                                    for member, hits in alternatives])) if alternatives else ""
+                                    for member, hits in alternatives],
+                      [(member.id, member.desire) for member in missing], candidate.search_incomplete)) if alternatives or missing else ""
     if signature and signature != session.alternative_signature:
         summary = "; ".join(f'{member.name} pediu "{member.desire}" → {hits[0].name}'
                             for member, hits in alternatives)
-        say(session, "Nas lojas consultadas, nao encontrei um restaurante que atendesse todos os desejos exatos. "
-            f"Em **{candidate.merchant.name}**, mostrei alternativas similares para: {summary}. "
-            "Os pedidos originais continuam registrados; cada pessoa pode aceitar uma alternativa pelo + ou mudar seu desejo. "
-            "Mantive os tetos de preco e as restricoes alimentares.")
+        text = ("Parte das consultas ao iFood falhou; nao consegui confirmar uma opcao exata para todos. "
+                if candidate.search_incomplete else
+                "Nas lojas consultadas, nao encontrei um restaurante que atendesse todos os desejos exatos. ")
+        text += f"Em **{candidate.merchant.name}**, "
+        if alternatives:
+            text += f"mostrei alternativas similares para: {summary}. "
+        if missing:
+            pending = "; ".join(f'{member.name}: "{member.desire}"' for member in missing)
+            text += f"Ainda sem opcao compativel neste restaurante, mesmo entre os similares: {pending}. "
+            text += "Mostrei os pratos disponiveis para os demais; o host pode trocar de restaurante ou voces podem ajustar os desejos. "
+        text += "Os pedidos originais continuam registrados; aceitar uma alternativa exige adicionar pelo +. Mantive os tetos e restricoes."
+        say(session, text)
     session.alternative_signature = signature
     return True
 
 
 def _announce(session: Session) -> None:
     """Tell the group once per result set - not on every keystroke."""
-    signature = repr((preference_signature(session), [(o.merchant_id, o.alternative_members) for o in session.merchant_options]))
+    signature = repr((preference_signature(session), [(o.merchant_id, o.alternative_members, o.missing_members) for o in session.merchant_options]))
     if signature == session.recommend_signature:
         return
     session.recommend_signature = signature
@@ -251,13 +267,13 @@ def _announce(session: Session) -> None:
     if chosen is None:
         return
     total = len(session.merchant_options)
-    description = "com opcoes e alternativas para a mesa" if chosen.alternative_members else "que atende a mesa"
+    description = "com opcoes parciais para a mesa" if chosen.missing_members else "com opcoes e alternativas para a mesa" if chosen.alternative_members else "que atende a mesa"
     text = f"Achei {total} restaurante{'s' if total > 1 else ''} {description} e escolhi **{chosen.name}**"
     if names:
         text += f". O host pode trocar por {', '.join(names[:3])} no topo do chat."
     else:
         text += "."
-    text += " Cada um adiciona o seu prato na sugestao acima da caixa de mensagem 👍"
+    text += " Confira as sugestoes acima da caixa de mensagem; o carrinho so pode fechar quando todos tiverem um prato."
     say(session, text)
 
 
@@ -276,7 +292,8 @@ async def publish(state: RecommendState) -> dict[str, Any]:
         session.last_error = None
     session.recommend_error = None
 
-    keep = previously_selected if any(o.merchant_id == previously_selected for o in options) else None
+    best_coverage = max((o.covers for o in options), default=0)
+    keep = previously_selected if any(o.merchant_id == previously_selected and o.covers == best_coverage for o in options) else None
     chosen = keep or (options[0].merchant_id if options else None)
     if chosen:
         publish_recommendations(session, chosen)

@@ -2,13 +2,12 @@
 
 Constraints that make the chat usable with a small local model:
 
-* It gets **four table tools plus one read-only iFood search**, never the 23 raw
+* It gets **six Mesa tools including one read-only iFood search**, never the raw
   MCP tools. The cart is built by the deterministic graphs instead.
 * Every message carries its author (``author_id``), the model is told who is
   speaking, and ``update_my_order`` is bound to that person. Only the host can
   edit someone else's card or start the reconciliation.
-* Audio arrives already transcribed (browser speech recognition); photos are
-  passed to the model as ``image_url`` blocks when it supports vision.
+* Microphone audio is transcribed by Gemini before entering this text flow.
 """
 
 from __future__ import annotations

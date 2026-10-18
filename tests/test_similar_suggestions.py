@@ -56,16 +56,19 @@ async def test_similar_suggestions_preserve_exact_person_and_original_wishes():
 
 async def test_unknown_or_unrelated_food_is_not_called_similar():
     people = [Member(id="a", name="Ana", desire="pizza"), Member(id="b", name="Bia", desire="sushi")]
-    with pytest.raises(solver.NoMatch):
-        await candidates([dish("pizza", "p", "Pizza"), dish("sushi", "s", "Sushi")], people)
+    result = await candidates([dish("pizza", "p", "Pizza"), dish("sushi", "s", "Sushi")], people)
+    assert len(result) == 2
+    assert all(sum(bool(options) for options in c.options.values()) == 1 for c in result)
+    assert all(not h.alternative_query for c in result for hits in c.options.values() for h in hits)
 
 
 async def test_alternatives_do_not_relax_budget_or_ingredient_exclusions():
     people = [Member(id="a", name="Ana", desire="hamburguer bacon"),
               Member(id="b", name="Bia", desire="hamburguer frango sem tomate", max_budget=30)]
-    with pytest.raises(solver.NoMatch):
-        await candidates([dish("shop", "bacon", "Hamburguer bacon tomate"),
-                          dish("shop", "safe", "Hamburguer salada", 45)], people)
+    result = await candidates([dish("shop", "bacon", "Hamburguer bacon tomate"),
+                               dish("shop", "safe", "Hamburguer salada", 45)], people)
+    assert result[0].options["a"]
+    assert not result[0].options["b"]
 
 
 async def test_only_similar_results_can_seed_discovery():
@@ -119,3 +122,80 @@ async def test_dietary_filter_is_retained_when_looking_for_similars():
     assert [h.item_id for h in result[0].options["b"]] == ["veg"]
     assert any(args["refinements"].get("itemRestrictions") == ["VEGETARIAN"]
                for tool, args in api.calls if args.get("refinements", {}).get("merchantId"))
+
+
+@pytest.mark.parametrize("wish,menu_name", [("hamburguer bacon", "X-Bacon"),
+                                          ("x-salada", "Hamburguer salada"),
+                                          ("x bacon egg", "Hamburguer bacon egg")])
+async def test_brazilian_burger_names_are_recognized(wish, menu_name):
+    person = Member(id="a", name="Ana", desire=wish)
+    result = await candidates([dish("shop", "item", menu_name)], [person])
+    assert result[0].options["a"]
+    assert result[0].options["a"][0].alternative_query is None
+    assert solver.similar_query(heuristic_intent(person)) == "hamburguer"
+
+
+async def test_partial_results_publish_explanations_and_checkout_remains_blocked():
+    gateway.set_gateway(Catalog([dish("shop", "pizza", "Pizza calabresa")]))
+    session = store.get_or_create("PARTIAL")
+    friend = service.join(session, "Bia")
+    session.host().desire = "pizza calabresa"
+    friend.desire = "sushi"
+    service.start_recommend(session)
+    await service._recommend_tasks[session.room_id]
+    assert not session.recommend_error
+    assert session.merchant_options[0].covers == 1
+    assert session.merchant_options[0].requested_count == 2
+    assert session.merchant_options[0].missing_members == ["Bia"]
+    assert session.recommendations
+    assert not any(card.member_id == friend.id for card in session.recommendations)
+    assert any('Bia: "sushi"' in m.text for m in session.chat)
+    await service.add_to_cart(session, session.host_member_id, session.host_member_id)
+    with pytest.raises(service.TableError, match="Falta o prato"):
+        service.start_finish_cart(session, session.host_member_id)
+
+
+async def test_related_savory_snacks_are_offered_as_alternatives():
+    people = [Member(id="a", name="Ana", desire="hamburguer bacon"),
+              Member(id="b", name="Bia", desire="coxinha")]
+    result = await candidates([dish("shop", "burger", "X-Bacon"),
+                               dish("shop", "pastry", "Pastel queijo")], people)
+    assert result[0].options["b"][0].alternative_query == "salgado"
+    assert result[0].options["b"][0].item_id == "pastry"
+
+
+async def test_transient_scoped_failures_keep_confirmed_partial_cards(monkeypatch):
+    class ScopedFailure(Catalog):
+        async def call(self, tool, **args):
+            if tool in {"searchOffers", "browseOffers"} and args.get("refinements", {}).get("merchantId"):
+                raise gateway.MCPError(tool, "upstream failure")
+            return await super().call(tool, **args)
+
+    people = [Member(id="a", name="Ana", desire="pizza"), Member(id="b", name="Bia", desire="sushi")]
+    result = await solver.find_merchant(solver.Searcher(ScopedFailure([dish("shop", "p", "Pizza")]), {}),
+                                       people, {m.id: heuristic_intent(m) for m in people}, lambda *args: None)
+    assert result[0].options["a"]
+    assert not result[0].options["b"]
+    assert result[0].search_incomplete
+
+
+async def test_detail_filter_does_not_discard_everyone_when_one_dish_exceeds_budget():
+    class RequiredExtra(Catalog):
+        async def call(self, tool, **args):
+            data = await super().call(tool, **args)
+            if tool == "getItem" and args["itemId"] == "chicken":
+                return {**data, "unitPrice": 80}
+            return data
+
+    gateway.set_gateway(RequiredExtra([dish("shop", "bacon", "Hamburguer bacon"),
+                                      dish("shop", "chicken", "Hamburguer frango")]))
+    session = store.get_or_create("DETAIL-PARTIAL")
+    friend = service.join(session, "Bia")
+    session.host().desire = "hamburguer bacon"
+    friend.desire = "hamburguer frango"
+    friend.max_budget = 40
+    service.start_recommend(session)
+    await service._recommend_tasks[session.room_id]
+    assert not session.recommend_error
+    assert session.merchant_options[0].missing_members == ["Bia"]
+    assert all(card.member_id == session.host_member_id for card in session.recommendations)

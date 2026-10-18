@@ -1,31 +1,13 @@
-# Local Ollama model for the iFood agent.
-#
-# WHY THIS FILE EXISTS
-#
-# Ollama defaults to a 4096-token context window. The iFood MCP server's 23 tool
-# schemas alone are 10,508 tokens, so at the default the schemas are silently
-# truncated and the model answers as if the tools do not exist - the same
-# failure mode we hit on Gemini. num_ctx must be raised explicitly; there is no
-# way to pass it through the OpenAI-compatible endpoint.
-#
-# USAGE
+# Existing local Ollama preset. Change FROM to use another installed model.
 #
 #   ollama pull qwen3:8b
 #   ollama create ifood-agent -f Modelfile.ollama
 #
-# Then point .env at it:
-#
-#   LLM_API_KEY=ollama
-#   LLM_BASE_URL=http://localhost:11434/v1
-#   MODEL_NAME=ifood-agent
-#
-# On an 8 GB GPU the KV cache is what decides whether this fits. If the model
-# spills to CPU, either lower num_ctx to 12288 or quantise the cache with
-# OLLAMA_KV_CACHE_TYPE=q8_0 in the server's environment.
+# Then set ENVIRONMENT=local and OLLAMA_MODEL=ifood-agent in .env.
 
 FROM qwen3:8b
 
-# 16,384 tokens: the 23 tool schemas (~10.5k) plus room for a few turns.
+# Room for chat history and Mesa's six tools. Raw MCP schemas stay in Python.
 PARAMETER num_ctx 16384
 
 # Deterministic tool selection, matching make_client(temperature=0).

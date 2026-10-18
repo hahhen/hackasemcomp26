@@ -216,10 +216,11 @@ async def main() -> None:
         "",
         f"Catálogo gerado a partir de uma chamada real a `tools/list` em `{mcp_url()}`.",
         (
-            f"São **{len(tools)} ferramentas**, custando **{total:,} tokens** de schema — "
-            "reenviados em **toda** chamada de modelo. O total exato varia entre ~10.5k "
-            "e ~10.7k conforme o cliente serializa o schema; aqui usamos o formato de "
-            "função da OpenAI."
+            f"Este inventário contém **{len(tools)} ferramentas**, com **{total:,} tokens** "
+            "de schema no formato de função OpenAI. Esse seria o custo por chamada se "
+            "todas fossem vinculadas ao modelo; **o Mesa mantém o catálogo no gateway "
+            "Python e envia apenas suas seis ferramentas de aplicação ao LLM**. "
+            "O total exato varia com a serialização."
         ),
         "",
         "- `ifood-mcp-tools.json` contém os schemas brutos, se precisar reprocessar.",

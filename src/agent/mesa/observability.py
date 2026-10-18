@@ -42,13 +42,15 @@ def emit(event: str, **fields) -> None:
 
 
 def failure(exc: BaseException) -> dict:
-    message = str(exc).lower()
+    code = getattr(exc, "code", None)
+    message = f"{code or ''} {exc}".lower()
     category = next((name for name, markers in {
         "upstream": ("upstream", "internal"), "auth": ("invalid_client", "unauthor", "401"),
         "rate_limit": ("429", "quota"), "timeout": ("timeout", "timed out"),
         "incomplete": ("incompleta", "sem cartid", "identificador"),
     }.items() if any(marker in message for marker in markers)), "unknown")
     return {"error_type": type(exc).__name__, "error_category": category,
+            "mcp_code": code,
             "mcp_tool": getattr(exc, "tool", None)}
 
 

@@ -25,8 +25,12 @@ falha duas vezes e funciona na terceira gera uma chamada e três tentativas.
 Mock gera chamadas, sem tentativas de rede.
 
 Campos comuns: `timestamp` UTC, `room_id`, `order_id`, `run_id`, `graph`, `stage`.
-Falhas incluem `error_type`, `error_category` e `mcp_tool`. Mensagens brutas de
-erro, argumentos, resultados, áudio, prompts, endereços e credenciais não são
+Falhas incluem `error_type`, `error_category` e `mcp_tool`.
+As falhas do gateway também preservam `mcp_code` (por exemplo, `INTERNAL` ou
+`UNAUTHENTICATED`) mesmo depois de esgotar retentativas. A duração inclui espera
+no limite global de concorrência, reconexão do adaptador e retentativas no evento
+de chamada lógica; não representa exclusivamente o tempo de processamento do iFood.
+Mensagens brutas de erro, argumentos, resultados, áudio, prompts, endereços e credenciais não são
 gravados. A classificação é heurística; `unknown` requer diagnóstico adicional.
 Chamadas diretas fora de uma operação recebem correlação nula (`unscoped`).
 

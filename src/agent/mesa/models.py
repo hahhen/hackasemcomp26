@@ -153,6 +153,9 @@ class MerchantOption(CamelModel):
     #: How many people this restaurant has something for.
     covers: int = 0
     alternative_members: list[str] = Field(default_factory=list)
+    missing_members: list[str] = Field(default_factory=list)
+    requested_count: int = 0
+    search_incomplete: bool = False
 
 
 class Event(CamelModel):

@@ -68,7 +68,7 @@ def load_config() -> OAuthConfig:
     if not client_id or not client_secret:
         raise RuntimeError(
             "MCP_CLIENT_ID and MCP_CLIENT_SECRET must be set to sign in.\n"
-            "See .env.example (values are in setup-sudowin-mcp.mjs)."
+            "Configure the client credentials supplied by iFood in .env; see .env.example."
         )
     return OAuthConfig(
         client_id=client_id,
@@ -267,7 +267,7 @@ def _save_cached(token: dict) -> None:
         pass  # best effort on platforms without POSIX permissions
 
 
-async def get_access_token(*, force: bool = False) -> str:
+async def get_access_token(*, force: bool = False, refresh: bool = False, interactive: bool = True) -> str:
     """Return a valid bearer token, signing in or refreshing as needed.
 
     A token set directly in ``MCP_BEARER_TOKEN`` short-circuits the whole flow,
@@ -280,19 +280,24 @@ async def get_access_token(*, force: bool = False) -> str:
     cached = None if force else _load_cached()
 
     if cached:
-        if cached.get("expires_at", 0) > time.time():
+        if not refresh and cached.get("expires_at", 0) > time.time():
             return cached["access_token"]
         if refresh_token := cached.get("refresh_token"):
             try:
-                token = _token_request(
+                token = await asyncio.to_thread(
+                    _token_request,
                     cfg,
                     {"grant_type": "refresh_token", "refresh_token": refresh_token},
                 )
                 _save_cached(token)
                 return token["access_token"]
             except RuntimeError as err:
+                if not interactive:
+                    raise RuntimeError("Nao consegui renovar a autenticacao do iFood. Execute python -m agent.oauth no terminal.") from err
                 print(f"  refresh failed ({err}); signing in again.", flush=True)
 
+    if not interactive:
+        raise RuntimeError("Autenticacao do iFood expirada ou ausente. Execute python -m agent.oauth no terminal.")
     token = await _authorize(cfg, timeout=float(os.getenv("MCP_OAUTH_TIMEOUT", "300")))
     _save_cached(token)
     return token["access_token"]
