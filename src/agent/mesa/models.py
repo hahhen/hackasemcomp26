@@ -197,6 +197,9 @@ class Session(CamelModel):
     busy: bool = False
     #: True while the chat agent is answering (so other devices can show dots).
     chat_busy: bool = False
+    chat_phase: str | None = None
+    busy_phase: str | None = None
+    cart_pending_members: list[str] = Field(default_factory=list)
     tracking: list[dict[str, Any]] = Field(default_factory=list)
 
     # --- restaurant search (runs automatically as people chat) ---------------

@@ -126,17 +126,16 @@ class LiveGateway:
                 if attempt == attempts - 1:
                     raise MCPError(tool, "O iFood esta temporariamente indisponivel "
                                    f"na consulta {tool} apos {attempts} tentativas. Tente novamente.", code=exc.code) from exc
-                # Some address failures return INTERNAL even while a locally
-                # unexpired token is unusable. A controlled refresh restored
-                # reads in the isolated HTTP diagnostic. Recover only after
-                # two failed reads, within the existing three-attempt budget.
-                if tool == "listAddresses" and attempt == 1 and first_internal and exc.code == "INTERNAL":
-                    await self._recover_address_auth(failed_token)
+                # Cached addresses bypass listAddresses, so every retried read
+                # needs the same bounded recovery. INTERNAL can also be a true
+                # outage; refresh once, not on each failure or on mutations.
+                if attempt == 1 and first_internal and exc.code == "INTERNAL":
+                    await self._recover_read_auth(failed_token, tool)
                 logging.getLogger(__name__).warning("%s transient failure (attempt %s/%s)",
                                                     tool, attempt + 1, attempts)
                 await asyncio.sleep(0.5 * (2 ** attempt))
 
-    async def _recover_address_auth(self, failed_token: str | None) -> None:
+    async def _recover_read_auth(self, failed_token: str | None, tool: str) -> None:
         if not failed_token or os.getenv("MCP_BEARER_TOKEN"):
             return
         async with self._auth_recovery_lock:
@@ -148,7 +147,7 @@ class LiveGateway:
             if now - self._last_auth_recovery < 300:
                 return
             self._last_auth_recovery = now
-            logging.getLogger(__name__).warning("Repeated listAddresses INTERNAL; trying one OAuth refresh")
+            logging.getLogger(__name__).warning("Repeated %s INTERNAL; trying one OAuth refresh and client rebuild", tool)
             await self._load(force=True)
 
     async def _call_once(self, tool: str, **args: Any) -> Any:

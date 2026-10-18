@@ -1,4 +1,5 @@
 import type { Run } from "../App";
+import { useRef, useState } from "react";
 import { api } from "../api";
 import type { Member, Session } from "../types";
 import { Composer } from "./Composer";
@@ -19,6 +20,15 @@ interface Props {
  * "ordering control" - people ask in the chat and the agent does the rest.
  */
 export function DeviceFrame({ member, session, run, plain }: Props) {
+  const [activity, setActivity] = useState<string | null>(null);
+  const activityId = useRef(0);
+  const runWithActivity: Run = async (action, label) => {
+    if (!label) return run(action);
+    const id = ++activityId.current;
+    setActivity(label);
+    try { return await run(action); }
+    finally { if (id === activityId.current) setActivity(null); }
+  };
   return (
     <article className={`device ${member.isHost ? "is-host" : ""} ${session.chat.some((message) => message.kind === "user") ? "" : "is-welcoming"}`}>
       <div className="welcome-backdrop" aria-hidden="true" />
@@ -34,11 +44,11 @@ export function DeviceFrame({ member, session, run, plain }: Props) {
       <RestaurantBar session={session} meId={member.id} run={run} />
 
       <div className="device-body">
-        <GroupChat session={session} meId={member.id} />
+        <GroupChat session={session} meId={member.id} activity={activity} />
       </div>
 
       <footer className="device-foot">
-        <OrderDock session={session} meId={member.id} run={run} compact />
+        <OrderDock session={session} meId={member.id} run={runWithActivity} compact />
         <Composer
           compact
           placeholder={plain ? "O que você quer comer?" : `Mensagem como ${member.name.split(" ")[0]}…`}

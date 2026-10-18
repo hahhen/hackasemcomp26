@@ -131,6 +131,9 @@ export interface Session {
   busy: boolean;
   /** True while the agent is answering, so every open screen can show dots. */
   chatBusy: boolean;
+  chatPhase?: string | null;
+  busyPhase?: string | null;
+  cartPendingMembers?: string[];
   hostMemberId: string | null;
   paidCount: number;
   activeCount: number;

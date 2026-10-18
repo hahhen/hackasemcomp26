@@ -176,6 +176,18 @@ Use um único worker: salas, tarefas e locks são mantidos no processo Python.
 
 ## Estado, limites e diagnóstico
 
+O chat mostra a atividade real do agente: entender o pedido, buscar restaurantes,
+conferir pratos, adicionar ao carrinho, buscar cupons e preparar o pedido. Os
+indicadores somem ao concluir, cancelar ou falhar. A interface consulta o estado
+a cada 350 ms durante uma operação e a cada 1,5 s quando está ociosa.
+
+As buscas começam assim que o agente registra uma mudança de desejo, em paralelo
+à resposta final. Consultas iguais compartilham uma leitura dentro da mesma
+busca; filtros, orçamento e paginação continuam separados. Lojas com oito sugestões
+exatas por pessoa não precisam de uma busca extra para ampliar essas listas.
+Resultados não são reaproveitados entre buscas e a validação do prato continua
+acontecendo antes de adicioná-lo ao carrinho.
+
 - `MESA_PERSIST=sessions.json` preserva mesas entre reinícios; vazio mantém só memória.
 - `MESA_CHAT_LLM=true` usa o LLM na conversa. `MESA_RECOMMEND_LLM=false` mantém a
   extração de consultas por regras, sem uma chamada extra de modelo por busca.
@@ -186,8 +198,10 @@ Use um único worker: salas, tarefas e locks são mantidos no processo Python.
 - `GET /api/health` mostra o modo e modelo configurados; não testa a disponibilidade do iFood.
 - Logs estruturados ficam em `logs/observability.jsonl`; veja [OBSERVABILITY.md](OBSERVABILITY.md).
 - Falhas `INTERNAL` do MCP não são resultados vazios. O gateway limita retentativas
-  e pode tentar renovar OAuth após falhas repetidas de endereço. Veja o histórico
-  e as evidências em [MCP-FEEDBACK.md](MCP-FEEDBACK.md).
+  e pode tentar renovar OAuth e reconstruir o cliente após falhas repetidas de
+  leitura (`listAddresses`, `getItem`, `getMerchant`), inclusive em mesas com
+  endereço salvo. Essa recuperação tem intervalo mínimo de cinco minutos. Use os logs
+  estruturados para identificar a ferramenta e o código de erro.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/observability_report.py
@@ -213,8 +227,7 @@ disponibilidade de serviços externos.
 - `src/agent/providers.py`: Ollama/Zen; `oauth.py` e `mcp.py`: integração MCP.
 - `frontend/src/`: interface True/God, salas, sugestões e carrinho compartilhado.
 - `tests/`: testes automatizados; `scripts/`: inventário e diagnósticos explícitos.
-- [ARCHITECTURE.md](ARCHITECTURE.md): arquitetura e limites do protótipo.
-- [IFOOD-MCP-TOOLS.md](IFOOD-MCP-TOOLS.md): referência do catálogo MCP.
+- [ifood-mcp-tools.json](ifood-mcp-tools.json): inventário de schemas do MCP.
 
 As confirmações de Pix são simuladas e a identidade é local ao navegador. O
 protótipo usa a conta iFood autenticada na instalação do backend.

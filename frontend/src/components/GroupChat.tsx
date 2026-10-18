@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, Session } from "../types";
 import { Rich } from "./Rich";
+import { activityLabel } from "../activity";
 
 /** Stable colour per person, so the same friend is the same colour everywhere. */
 export function authorColor(name: string): string {
@@ -46,9 +47,11 @@ interface Props {
   session: Session;
   /** Whose screen this is: their own messages go on the right. */
   meId: string | null;
+  activity?: string | null;
 }
 
-export function GroupChat({ session, meId }: Props) {
+export function GroupChat({ session, meId, activity: immediateActivity }: Props) {
+  const activity = immediateActivity || activityLabel(session, meId);
   const end = useRef<HTMLDivElement>(null);
   const hasMessage = session.chat.some((message) => message.kind === "user");
   const [welcome, setWelcome] = useState(!hasMessage);
@@ -62,7 +65,7 @@ export function GroupChat({ session, meId }: Props) {
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
-  }, [session.chat.length, session.chatBusy]);
+  }, [session.chat.length, Boolean(activity)]);
 
   return (
     <div className="group-chat">
@@ -74,13 +77,12 @@ export function GroupChat({ session, meId }: Props) {
       {session.chat.map((message) => (
         <Bubble key={message.id} message={message} meId={meId} />
       ))}
-      {session.chatBusy && (
+      {activity && (
         <div className="msg theirs">
           <span className="author agent-author">Agente</span>
-          <div className="bubble agent typing" aria-label="agente digitando">
-            <span />
-            <span />
-            <span />
+          <div className="bubble agent agent-activity" role="status" aria-live="polite" aria-atomic="true">
+            <span className="activity-dots" aria-hidden="true"><i /><i /><i /></span>
+            <span>{activity}</span>
           </div>
         </div>
       )}

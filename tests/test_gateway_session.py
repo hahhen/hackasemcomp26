@@ -33,7 +33,8 @@ async def test_auth_error_refreshes_token_before_rebuilding_tools(monkeypatch):
     assert token.await_args_list[1].kwargs == {"refresh": True, "interactive": False}
 
 
-async def test_repeated_address_internal_recovers_with_new_token(monkeypatch):
+@pytest.mark.parametrize("tool_name", ["listAddresses", "getItem", "getMerchant"])
+async def test_repeated_read_internal_recovers_with_new_token(monkeypatch, tool_name):
     monkeypatch.delenv("MCP_BEARER_TOKEN", raising=False)
     active = "old-token"
 
@@ -43,19 +44,20 @@ async def test_repeated_address_internal_recovers_with_new_token(monkeypatch):
             active = "new-token"
         return active
 
-    old = SimpleNamespace(name="listAddresses", ainvoke=AsyncMock(return_value={"code": "INTERNAL", "message": "upstream failure"}))
-    new = SimpleNamespace(name="listAddresses", ainvoke=AsyncMock(return_value={"results": []}))
+    old = SimpleNamespace(name=tool_name, ainvoke=AsyncMock(return_value={"code": "INTERNAL", "message": "upstream failure"}))
+    result = {"itemName": "Burger"} if tool_name == "getItem" else {"results": []}
+    new = SimpleNamespace(name=tool_name, ainvoke=AsyncMock(return_value=result))
     tokens = AsyncMock(side_effect=get_token)
     monkeypatch.setattr(oauth, "get_access_token", tokens)
     monkeypatch.setattr(mcp, "load_mcp_tools", AsyncMock(side_effect=[[old], [new]]))
     monkeypatch.setattr("agent.mesa.gateway.asyncio.sleep", AsyncMock())
-    assert await LiveGateway().call("listAddresses") == {"results": []}
+    assert await LiveGateway().call(tool_name) == result
     assert old.ainvoke.await_count == 2
     assert new.ainvoke.await_count == 1
     assert sum(call.kwargs["refresh"] for call in tokens.await_args_list) == 1
 
 
-async def test_address_recovery_has_shared_cooldown(monkeypatch):
+async def test_read_recovery_has_shared_cooldown(monkeypatch):
     monkeypatch.delenv("MCP_BEARER_TOKEN", raising=False)
     gw = LiveGateway()
     gw._token_fingerprint = "old"
@@ -64,8 +66,9 @@ async def test_address_recovery_has_shared_cooldown(monkeypatch):
         gw._token_fingerprint = "new"
 
     gw._load = AsyncMock(side_effect=load)
-    await asyncio.gather(*(gw._recover_address_auth("old") for _ in range(4)))
-    await gw._recover_address_auth("new")
+    await asyncio.gather(*(gw._recover_read_auth("old", tool) for tool in (
+        "listAddresses", "getItem", "getMerchant", "getItem")))
+    await gw._recover_read_auth("new", "getItem")
     gw._load.assert_awaited_once_with(force=True)
 
 
@@ -85,7 +88,7 @@ async def test_static_bearer_does_not_trigger_oauth_recovery(monkeypatch):
     gw = LiveGateway()
     gw._token_fingerprint = "token"
     gw._load = AsyncMock()
-    await gw._recover_address_auth("token")
+    await gw._recover_read_auth("token", "getItem")
     gw._load.assert_not_awaited()
 
 

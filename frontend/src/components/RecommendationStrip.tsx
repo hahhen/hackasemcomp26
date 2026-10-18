@@ -1,7 +1,7 @@
 import type { Run } from "../App";
 import { api } from "../api";
 import { money } from "../format";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import type { Member, Recommendation, Session } from "../types";
 
 interface Props {
@@ -12,12 +12,13 @@ interface Props {
 }
 
 function Card({ member, recommendation, session, meId, run }: Props & { member: Member; recommendation: Recommendation }) {
+  const [adding, setAdding] = useState(false);
   const isHost = meId === session.hostMemberId;
   const open = session.status === "COLLECTING_PREFERENCES";
   const item = member.assignedItem?.itemId === recommendation.itemId ? member.assignedItem : null;
   const mine = meId === member.id;
 
-  const mayAdd = open && !session.busy && !session.searchingRecommendations && !session.chatBusy && (isHost || mine);
+  const mayAdd = open && !adding && !session.cartPendingMembers?.includes(member.id) && !session.busy && !session.searchingRecommendations && !session.chatBusy && (isHost || mine);
   const price = item ? item.price : recommendation.price;
 
   return (
@@ -53,9 +54,13 @@ function Card({ member, recommendation, session, meId, run }: Props & { member: 
           title={mayAdd ? (member.assignedItem ? "trocar meu prato por este" : "adicionar ao carrinho") : "aguarde a atualização das sugestões"}
           aria-label={`Adicionar ${recommendation.name} ao carrinho de ${member.name}`}
           disabled={!mayAdd}
-          onClick={() => run(() => api.addToCart(member.id, meId, recommendation.itemId))}
+          onClick={async () => {
+            setAdding(true);
+            try { await run(() => api.addToCart(member.id, meId, recommendation.itemId), "Adicionando ao carrinho…"); }
+            finally { setAdding(false); }
+          }}
         >
-          +
+          {adding ? "…" : "+"}
         </button>
       )}
     </div>

@@ -177,6 +177,7 @@ async def build_cart(
     assert session.host_address, "host address must be resolved first"
     members = [m for m in session.active_members if m.assigned_item]
 
+    session.busy_phase = "Criando o carrinho no iFood…"
     created = await gateway.call(
         "createCart",
         merchantId=merchant.merchant_id,
@@ -204,9 +205,12 @@ async def build_cart(
     )
     log(f"createCart -> {len(members)} itens com customerNote por amigo", "tool")
 
+    session.busy_phase = "Conferindo os valores do carrinho…"
     cart = await gateway.call("getCart", cartId=cart_id)
+    session.busy_phase = "Procurando o melhor cupom…"
     cart = await pick_voucher(gateway, str(cart_id), cart, log)
 
+    session.busy_phase = "Conferindo as opções de entrega…"
     try:
         methods = await gateway.call("getCartDeliveryMethods", cartId=cart_id)
         rows = dicts_with(methods, "deliveryMethodId")
@@ -222,8 +226,10 @@ async def build_cart(
     except MCPError as exc:
         log(f"Entrega nao configurada ({exc.message})", "warn")
 
+    session.busy_phase = "Preparando o pagamento…"
     await set_payment(gateway, session, log)
 
+    session.busy_phase = "Calculando a parte de cada pessoa…"
     cart = await gateway.call("getCart", cartId=cart_id)
     apply_cart_snapshot(session, cart)
     session.mcp_cart.voucher_code = _applied_voucher(cart)

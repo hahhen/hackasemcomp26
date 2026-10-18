@@ -16,7 +16,7 @@ from agent.mesa import cart as cart_ops
 from agent.mesa import context, recommend_graph, solver
 from agent.mesa.checkout_graph import run_checkout
 from agent.mesa.gateway import MCPError, get_gateway
-from agent.mesa.models import Member, Restriction, Session, Status
+from agent.mesa.models import Member, MerchantOption, Recommendation, Restriction, Session, Status
 from agent.mesa.store import heard, log, say, store
 from agent.mesa.observability import operation
 
@@ -200,6 +200,7 @@ async def answer_turn(
 
     async with store.lock(session.room_id):
         session.chat_busy = True
+        session.chat_phase = "Entendendo seu pedido…"
         completed = False
         try:
             await asyncio.wait_for(
@@ -215,12 +216,15 @@ async def answer_turn(
                 kind="system",
             )
         finally:
-            # Sync tools run without an event loop. Launch one search after the
-            # final pending turn, including wishes saved before a model timeout.
-            if (completed and _has_wishes(session)
+            # Sync callers may leave a dirty wish without an event loop. Async
+            # tools already launch discovery while the model writes its reply;
+            # do not restart that search or search again for an unchanged wish.
+            if (completed and session.recommend_dirty and not session.searching_recommendations
+                    and _has_wishes(session)
                     and len(_pending_turns.get(session.room_id, [])) <= 1):
                 _schedule_recommend(session)
             session.chat_busy = False
+            session.chat_phase = None
             store.save()
 
 
@@ -250,6 +254,7 @@ def start_chat_turn(
     pending = _pending_turns.setdefault(session.room_id, [])
     pending.append((author, text, images))
     session.chat_busy = True
+    session.chat_phase = "Entendendo os pedidos da mesa…"
 
     async def process_pending() -> None:
         if previous is not None:
@@ -328,6 +333,8 @@ def _schedule_recommend(session: Session) -> None:
     if not _has_wishes(session):
         return  # nothing to search for yet
     session.recommend_dirty = True
+    if len(_pending_turns.get(session.room_id, [])) > 1:
+        return  # Process the queued wishes before starting a shared search.
     try:
         asyncio.get_running_loop()
     except RuntimeError:
@@ -337,6 +344,7 @@ def _schedule_recommend(session: Session) -> None:
     # Flag it here (not inside the task) so the UI - and tests - never see a gap
     # between "a search was asked for" and "a search is running".
     session.searching_recommendations = True
+    session.recommend_phase = "Procurando o restaurante certo para a mesa…"
     previous = _recommend_tasks.get(session.room_id)
     if previous is not None and not previous.done():
         previous.cancel()
@@ -475,6 +483,19 @@ async def add_to_cart(session: Session, member_id: str, author_id: str | None = 
         raise TableError("Ainda nao tenho uma sugestao para essa pessoa.")
     if session.searching_recommendations or session.chat_busy:
         raise TableError("Estou atualizando as sugestoes. Aguarde a busca terminar.")
+    if member.id in session.cart_pending_members:
+        raise TableError("Ja estou conferindo o prato desta pessoa. Aguarde.")
+    session.cart_pending_members.append(member.id)
+    try:
+        return await _validate_and_add(session, member, option, recommendation)
+    finally:
+        if member.id in session.cart_pending_members:
+            session.cart_pending_members.remove(member.id)
+        store.save()
+
+
+async def _validate_and_add(session: Session, member: Member, option: MerchantOption,
+                            recommendation: Recommendation) -> Member:
     preference = (member.desire, tuple(member.restrictions), member.max_budget)
 
     assert session.host_address
@@ -493,7 +514,7 @@ async def add_to_cart(session: Session, member_id: str, author_id: str | None = 
     except solver.NoMatch as exc:
         raise TableError(str(exc)) from exc
     if (session.selected_merchant_id != option.merchant_id
-            or session.recommendation(member_id, recommendation.item_id) != recommendation
+            or session.recommendation(member.id, recommendation.item_id) != recommendation
             or session.searching_recommendations or session.chat_busy
             or preference != (member.desire, tuple(member.restrictions), member.max_budget)):
         raise TableError("A sugestao mudou durante a validacao. Confira o novo prato.")
@@ -526,6 +547,8 @@ def start_finish_cart(session: Session, author_id: str | None = None) -> None:
     _cart_open(session)
     if session.searching_recommendations or session.chat_busy:
         raise TableError("Estou atualizando a mesa. Aguarde a busca terminar para fechar o carrinho.")
+    if session.cart_pending_members:
+        raise TableError("Aguarde a conferencia dos pratos antes de fechar o carrinho.")
     option = session.selected_option()
     if option is None:
         raise TableError("Nenhum restaurante selecionado ainda.")
@@ -543,6 +566,7 @@ def start_finish_cart(session: Session, author_id: str | None = None) -> None:
         )
 
     session.busy = True
+    session.busy_phase = "Preparando o carrinho da mesa…"
     _spawn(_finish_cart(session))
 
 
@@ -577,6 +601,7 @@ async def _finish_cart(session: Session) -> None:
         return
     finally:
         session.busy = False
+        session.busy_phase = None
         store.save()
 
     for member in session.active_members:
@@ -606,12 +631,14 @@ def start_checkout(
     if session.busy:
         raise TableError("O agente esta trabalhando; aguarde.")
     session.busy = True
+    session.busy_phase = "Preparando o envio do pedido…"
 
     async def run() -> None:
         try:
             await run_checkout(session.room_id, document)
         finally:
             session.busy = False
+            session.busy_phase = None
 
     task = asyncio.create_task(run())
     _tasks.add(task)

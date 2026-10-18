@@ -24,6 +24,30 @@ inclusive a nova tentativa após renovar autenticação. Assim, uma chamada que
 falha duas vezes e funciona na terceira gera uma chamada e três tentativas.
 Mock gera chamadas, sem tentativas de rede.
 
+As leituras `listAddresses`, `getItem` e `getMerchant` podem renovar OAuth e
+reconstruir o cliente antes da terceira tentativa, após dois erros `INTERNAL`.
+O limite é compartilhado entre ferramentas e salas: uma recuperação a cada
+cinco minutos. Isso também cobre mesas que já têm endereço salvo e não chamam
+`listAddresses`. Não se aplica a bearer estático ou a mutações com erro interno;
+falha persistente continua sendo reportada.
+
+O diagnóstico HTTP permite comparar o item publicado em uma mesa com o catálogo
+atual sem criar carrinho. `--compare-refresh` renova explicitamente o login salvo
+e compara os tokens em memória, sem escrevê-los no relatório:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/probe_mcp_http.py --room CODIGO --output artifacts/mcp-item-diagnostic.json
+.\.venv\Scripts\python.exe scripts/probe_mcp_http.py --room CODIGO --compare-refresh --output artifacts/mcp-item-refresh.json
+```
+
+Na reprodução de 18/10 às 12:19 UTC, o item salvo, endereço, perfil e busca
+falharam por HTTP direto com `INTERNAL`. Às 12:20 UTC, o mesmo item voltou a
+responder antes da renovação explícita, e respondeu também depois dela.
+Portanto, esse episódio não comprova que renovação seja a causa da recuperação.
+Os relatórios em `artifacts/mcp-item-diagnostic-20261018.json` e
+`artifacts/mcp-item-refresh-comparison-20261018.json` preservam horários e IDs
+das chamadas, sem coordenadas ou credenciais.
+
 Campos comuns: `timestamp` UTC, `room_id`, `order_id`, `run_id`, `graph`, `stage`.
 Falhas incluem `error_type`, `error_category` e `mcp_tool`.
 As falhas do gateway também preservam `mcp_code` (por exemplo, `INTERNAL` ou

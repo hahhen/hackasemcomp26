@@ -5,7 +5,7 @@ import { RoomEntrance } from "./components/RoomEntrance";
 import { GodView, TrueView } from "./components/RoomViews";
 import type { Health, Session } from "./types";
 
-export type Run = (action: () => Promise<Session>) => Promise<boolean>;
+export type Run = (action: () => Promise<Session>, activity?: string) => Promise<boolean>;
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -17,6 +17,7 @@ export default function App() {
   const [entryError, setEntryError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number>(0);
+  const mutationVersion = useRef(0);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -34,10 +35,14 @@ export default function App() {
   useEffect(() => {
     if (!room || !meId) return;
     let alive = true;
+    let timer: number;
     const tick = async () => {
+      const version = mutationVersion.current;
+      let delay = 1500;
       try {
         const next = await api.table();
-        if (!alive) return;
+        if (!alive || version !== mutationVersion.current) { delay = 350; return; }
+        if (next.chatBusy || next.searchingRecommendations || next.busy || next.cartPendingMembers?.length) delay = 350;
         if (!next.members.some((m) => m.id === meId && !m.removed)) {
           localStorage.removeItem(identityKey(room)); setMeId(null); setSession(null);
           setEntryError("Sua participação terminou. Entre novamente para voltar à mesa."); return;
@@ -45,11 +50,12 @@ export default function App() {
         setSession(next); setOffline(false);
       } catch (e) {
         if (alive) { setOffline(true); setEntryError(e instanceof Error ? e.message : "Não consegui abrir a mesa."); }
-      } finally { if (alive) setLoading(false); }
+      } finally {
+        if (alive) { setLoading(false); timer = window.setTimeout(tick, delay); }
+      }
     };
-    tick();
-    const timer = setInterval(tick, 1500);
-    return () => { alive = false; clearInterval(timer); };
+    void tick();
+    return () => { alive = false; clearTimeout(timer); };
   }, [meId]);
 
   useEffect(() => {
@@ -64,8 +70,10 @@ export default function App() {
   }, []);
 
   const run: Run = useCallback(async (action) => {
+    mutationVersion.current += 1;
     try { setSession(await action()); return true; }
     catch (e) { notify(e instanceof Error ? e.message : "Algo deu errado."); return false; }
+    finally { mutationVersion.current += 1; }
   }, [notify]);
 
   if (loading) return <div className="splash"><p>Abrindo sua mesa…</p></div>;

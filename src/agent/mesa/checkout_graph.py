@@ -65,6 +65,7 @@ async def gate(state: CheckoutState) -> dict[str, Any]:
 
 async def prepare_payment(state: CheckoutState) -> dict[str, Any]:
     session = _session(state)
+    session.busy_phase = "Conferindo o pagamento e o total…"
     gateway = get_gateway()
     await cart_ops.set_payment(gateway, session, lambda t, k="info": log(session, t, k))  # type: ignore[arg-type]
     try:
@@ -78,6 +79,7 @@ async def prepare_payment(state: CheckoutState) -> dict[str, Any]:
 
 async def submit(state: CheckoutState) -> dict[str, Any]:
     session = _session(state)
+    session.busy_phase = "Finalizando o pedido…"
     gateway = get_gateway()
     mcp = session.mcp_cart
 
@@ -88,6 +90,7 @@ async def submit(state: CheckoutState) -> dict[str, Any]:
         log(session, "submitOrder PULADO (MESA_SUBMIT_ENABLED=false): pedido simulado", "warn")
         return {"order_id": mcp.order_id}
 
+    session.busy_phase = "Enviando o pedido ao iFood…"
     try:
         placed = await gateway.call(
             "submitOrder", cartId=mcp.cart_id, userConsent=True, document=state.get("document")
@@ -105,6 +108,7 @@ async def submit(state: CheckoutState) -> dict[str, Any]:
 
 async def fetch_order(state: CheckoutState) -> dict[str, Any]:
     session = _session(state)
+    session.busy_phase = "Buscando a confirmação do pedido…"
     mcp = session.mcp_cart
     session.status = Status.ORDER_SUBMITTED
 

@@ -39,6 +39,13 @@ class Store:
             for room, raw in data.items():
                 session = Session.model_validate(raw)
                 session.busy = False
+                session.chat_busy = False
+                session.chat_phase = None
+                session.busy_phase = None
+                session.cart_pending_members = []
+                session.searching_recommendations = False
+                session.recommend_phase = None
+                session.recommend_dirty = False
                 self.sessions[room] = session
         except (OSError, ValueError):
             pass

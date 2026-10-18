@@ -17,6 +17,7 @@ how you end up with a vegetarian eating bacon.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import unicodedata
@@ -208,9 +209,29 @@ class Searcher:
         self.location = location
         self._sem = asyncio.Semaphore(CONCURRENCY)
         self._details: dict[tuple[str, str], asyncio.Task] = {}
+        self._searches: dict[str, asyncio.Task] = {}
 
     async def _search(self, query: str, refinements: dict[str, Any], *, browse: bool = False,
                       result_kind: str = "ITEM", max_pages: int | None = None) -> list[dict[str, Any]]:
+        # Room-local only: identical requests from different participants share
+        # a read, while budgets, restrictions, merchant and pagination remain
+        # part of the key. No results survive a new recommendation run.
+        key = json.dumps([query, refinements, browse, result_kind, max_pages], sort_keys=True)
+        task = self._searches.get(key)
+        if task is None:
+            task = asyncio.create_task(self._fetch_search(
+                query, refinements, browse=browse, result_kind=result_kind, max_pages=max_pages,
+            ))
+            self._searches[key] = task
+        try:
+            return await task
+        except BaseException:
+            if self._searches.get(key) is task:
+                self._searches.pop(key, None)
+            raise
+
+    async def _fetch_search(self, query: str, refinements: dict[str, Any], *, browse: bool = False,
+                            result_kind: str = "ITEM", max_pages: int | None = None) -> list[dict[str, Any]]:
         tool = "browseOffers" if browse else "searchOffers"
         rows: list[dict[str, Any]] = []
         token = None
@@ -455,7 +476,9 @@ async def find_merchant(
         returns a handful of items per store, so anyone with a thin list gets a
         search inside the store (``refinements.merchantId``) before ranking.
         """
-        thin = members
+        thin = [m for m in members if sum(
+            matches_exact(hit, intents[m.id]) for hit in by_member[m.id].get(mid, [])
+        ) < MAX_RECOMMENDATIONS_PER_MEMBER]
         scoped = await asyncio.gather(
             # One page has enough candidates for the recommendation strip. It
             # also prevents a broad request from downloading an entire menu for

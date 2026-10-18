@@ -141,10 +141,12 @@ code { background: #eee; padding: 2px 6px; border-radius: 6px; }
 .sysmsg { align-self: center; font-size: 12.5px; color: var(--muted); background: #f3f3f2; border-radius: 999px; padding: 5px 12px; }
 
 .attach { display: block; max-width: 170px; border-radius: 10px; margin-bottom: 6px; }
-.typing { display: flex; gap: 4px; padding: 13px 15px; }
-.typing span { width: 7px; height: 7px; border-radius: 50%; background: #b9b9b9; animation: blink 1.2s infinite; }
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
+.agent-activity { display: flex; align-items: center; gap: 10px; min-height: 42px; color: var(--muted); font-size: 13px; }
+.activity-dots { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.activity-dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 1.2s infinite; }
+.activity-dots i:nth-child(2) { animation-delay: 0.2s; }
+.activity-dots i:nth-child(3) { animation-delay: 0.4s; }
+@media (prefers-reduced-motion: reduce) { .activity-dots i { animation: none; } }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
 
 /* ---------- composer ---------- */

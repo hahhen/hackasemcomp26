@@ -145,6 +145,7 @@ def make_tools(session: Session, author: Member) -> list:
         Use for questions about what exists, prices, or dietary options. Returns
         a short list; it does not put anything in the cart.
         """
+        session.chat_phase = "Consultando o cardápio do iFood…"
         try:
             gateway = get_gateway()
             await context.resolve_address(gateway, session)
@@ -161,6 +162,8 @@ def make_tools(session: Session, author: Member) -> list:
             return f"erro ao consultar o iFood: {exc}"
         except Exception as exc:  # noqa: BLE001 - never break the chat over a search
             return f"erro inesperado na busca: {type(exc).__name__}"
+        finally:
+            session.chat_phase = "Preparando uma resposta…"
         rows = data.get("results", []) if isinstance(data, dict) else []
         if not rows:
             return f"nada encontrado para '{query}' perto do endereco da mesa"
@@ -180,7 +183,23 @@ def make_tools(session: Session, author: Member) -> list:
             return f"erro: {exc}"
         return "ok: procurando restaurantes para a mesa"
 
-    return [update_my_order, update_member, remove_member, show_table, search_menu, refresh_search]
+    tools = [update_my_order, update_member, remove_member, show_table, search_menu, refresh_search]
+    # Local mutations are short and must run on the room's event loop so they
+    # can start discovery immediately, alongside the final model response.
+    # Keep the sync function too, for scripts/tests using tool.invoke().
+    def asynchronous(local_tool):
+        async def invoke(**kwargs):
+            session.chat_phase = "Atualizando os pedidos da mesa…"
+            try:
+                return local_tool.func(**kwargs)
+            finally:
+                session.chat_phase = "Preparando uma resposta…"
+        return invoke
+
+    for local_tool in tools:
+        if local_tool.coroutine is None:
+            local_tool.coroutine = asynchronous(local_tool)
+    return tools
 
 
 def _to_message(message: ChatMessage, with_images: bool) -> BaseMessage:

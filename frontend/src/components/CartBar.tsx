@@ -126,8 +126,8 @@ export function CartBar({ session, meId, run }: Props) {
               {isHost ? (
                 <button
                   className="primary"
-                  disabled={missing.length > 0 || session.busy || session.chatBusy || session.searchingRecommendations || short}
-                  onClick={() => run(() => api.finishCart(meId))}
+                  disabled={missing.length > 0 || session.busy || session.chatBusy || session.searchingRecommendations || Boolean(session.cartPendingMembers?.length) || short}
+                  onClick={() => run(() => api.finishCart(meId), "Preparando o carrinho da mesa…")}
                 >
                   {session.busy ? "fechando…" : "Fechar carrinho e dividir"}
                 </button>
@@ -154,7 +154,7 @@ export function CartBar({ session, meId, run }: Props) {
                 <button
                   className="primary"
                   disabled={!session.allPaid || session.busy}
-                  onClick={() => run(() => api.submit(meId))}
+                  onClick={() => run(() => api.submit(meId), "Preparando o envio do pedido…")}
                 >
                   Enviar pedido (espera todos)
                 </button>
